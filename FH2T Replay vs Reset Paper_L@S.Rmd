@@ -1,0 +1,685 @@
+---
+title: "FH2T Replay_ISLS"
+date: "11/12/2021"
+output: html_document
+---
+
+Preparing libraries & merging datasets. 
+
+Primarily using the aggregate csvs for FH2T, merged with info from demographics, assessments, etc.
+
+For the conference paper, we're mostly using overall level data, as well as demographics & assessment data. May need problem-level data for the clovers plot.
+
+# Packages 
+```{r setup, include=FALSE}
+
+# prepare libraries
+library(dplyr)
+library(psych)
+library(ggplot2)
+library(sjPlot)
+library(lme4)
+library(tidyverse)
+library(splitstackshape)
+library(reshape2)
+library(stringr)
+library(nnet)
+options(max.print=1000000)
+gc()
+```
+
+
+# Data Prep 
+## Load/Merge/Structure
+```{r}
+#### imported cleaned & merged data files ####
+# the FH2T data from overall- to problem-level
+data_all_levels <- read.csv("data/2021-03-25-wpi_ies_study_fall_20_aggregation_table.csv",
+                            na.strings = c("N/A")) 
+
+# the existing merged overall & demographics dataset
+data_overall_level_demo <- read.csv("data/FH2T_aggregation_overall_merge_2021_03_25.csv",
+                            na.strings = c("N/A")) 
+
+# the pre/post test data
+data_assessments <- read.csv("data/Assessment_merged_2021_07_16_state_assessment.csv",
+                            na.strings = c("N/A")) 
+colnames(data_assessments)
+
+#### create WIDE merged file ####
+
+# select variables form all levels data 
+for_merging_all_levels <- data_all_levels %>%
+  dplyr::select(
+    studentID,
+    starts_with("o"),
+    starts_with("p") &
+      ends_with("_goback"),
+    starts_with("p") &
+      ends_with("_completed") &
+      !contains("first"),
+    starts_with("p") &
+      ends_with("_clover_first"),
+    starts_with("p") &
+      ends_with("_clover_last"),
+    starts_with("p") &
+      ends_with("_error"),
+    starts_with("p") &
+      ends_with("_reset"),
+  ) 
+colnames(for_merging_all_levels)
+# merge with student level data
+WIDE_merged_all_levels <- for_merging_all_levels %>%
+    inner_join(
+      data_overall_level_demo %>%
+        select(
+          student_number,
+          student_id,
+          xref,
+          final_school_id,
+          final_teacher_class,
+          final_teacher_id,
+          GIFTED,
+          ESOL,
+          ESOL_FORMER,
+          IEP,
+          MALE,
+          FEMALE,
+          student_raceEthnicityFed,
+          student_hispanicEthnicity,
+          PerformanceLevel
+        ) %>%
+        rename(studentID = xref),
+      by = "studentID"
+    ) %>% # n = 1184
+    inner_join(
+      data_assessments %>%
+        select(
+          student_id,
+          ScaleScore_5th.grade,
+          PerformanceLevel_5th.grade,
+          Scale.Score_7th.grade,
+          Performance.Level_7th.grade,
+          math_score_7th.grade,
+          pre.total_math_score,
+          mid.total_math_score,
+          post.total_math_score,
+          pre_MA_avg_score,
+          pre_MA_total_score,
+          post_MA_avg_score,
+          post_MA_total_score,
+          delayed.total_math_score
+        ) # selecting used variables from data_assessments
+      ,
+      by = "student_id"
+    ) # n = 1184
+  
+
+
+#### create LONG merged file ####
+View(as.data.frame(colnames(for_merging_all_levels)))
+
+for_merging_all_levels_LONGFULL <-for_merging_all_levels %>%
+#  select(names(for_merging_all_levels[1:1000])) %>%
+  select(-starts_with("o_")          ) %>%
+  melt(id = "studentID", variable.factor=FALSE) 
+colnames(for_merging_all_levels_LONGFULL)
+table(for_merging_all_levels_LONGFULL$variable)
+for_merging_all_levels_LONGFULL$variable1 <-
+  str_split(string = for_merging_all_levels_LONGFULL$variable, 
+           pattern = '_', 
+           n = 2,
+           simplify = F) 
+
+for_merging_all_levels_LONGFULL <- for_merging_all_levels_LONGFULL %>% 
+      unnest(variable1) %>% 
+      group_by(studentID, variable) %>% 
+      mutate(problem = seq_along(variable1)) %>% # add a column indicator
+      spread(key= problem, value = variable1)
+
+for_merging_all_levels_LONGFULL <- for_merging_all_levels_LONGFULL %>%
+  ungroup() %>%
+      select(-variable)
+
+
+colnames(for_merging_all_levels_LONGFULL)
+colnames(for_merging_all_levels_LONGFULL) <- c("studentID",
+                                               "value",
+                                               "problem",
+                                               "name")
+
+
+for_merging_all_levels_LONGFULL  <- for_merging_all_levels_LONGFULL %>%
+  group_by(studentID, 
+           problem) %>%
+  pivot_wider(names_from = name, 
+              values_from = value)
+colnames(for_merging_all_levels_LONGFULL)
+table(for_merging_all_levels_LONGFULL$problem)
+
+
+# add in student level data
+LONG_merged_all_levels <- for_merging_all_levels_LONGFULL %>%
+  left_join(
+    data_all_levels %>%
+      dplyr::select(
+        studentID,
+        o_distinct_completed,
+        o_percent_gobacks,
+        o_percentage_reset, 
+        o_percent_error
+      ),
+    by = "studentID"
+  ) %>%
+  inner_join(
+    data_overall_level_demo %>%
+      select(
+        student_number,
+        student_id,
+        xref,
+        final_school_id,
+        final_teacher_class,
+        final_teacher_id,
+        GIFTED,
+        ESOL,
+        ESOL_FORMER,
+        IEP,
+        MALE,
+        FEMALE,
+        student_raceEthnicityFed,
+        student_hispanicEthnicity,
+        PerformanceLevel
+      ) %>%
+      rename(studentID = xref),
+    by = "studentID"
+  ) %>% # n = 1184
+  inner_join(
+    data_assessments %>%
+      select(
+        student_id,
+        ScaleScore_5th.grade,
+        PerformanceLevel_5th.grade,
+        Scale.Score_7th.grade,
+        Performance.Level_7th.grade,
+        math_score_7th.grade,
+        pre.total_math_score,
+        mid.total_math_score,
+        post.total_math_score,
+        pre_MA_avg_score,
+        pre_MA_total_score,
+        post_MA_avg_score,
+        post_MA_total_score, 
+        delayed.total_math_score
+      ) # selecting used variables from data_assessments
+    ,
+    by = "student_id"
+  ) # n = 1184
+
+
+# Save MERGED files
+
+  write.csv(LONG_merged_all_levels, "LONG_merged_all_levels.csv")
+  write.csv(WIDE_merged_all_levels, "WIDE_merged_all_levels.csv")
+
+#Clean working environment
+
+# simplify df names
+LONG <- LONG_merged_all_levels
+WIDE <- WIDE_merged_all_levels
+
+# remove all other data frames
+rm(list=setdiff(ls(), c("LONG", "WIDE"))) # X will remain
+
+#LONG <- read.csv("LONG_merged_all_levels.csv")
+```
+
+ 
+# Analytic Sample
+```{r}
+# Exclude schools that drop the program (S03 & S07) 
+table(WIDE$final_school_id)
+WIDE_AD <- WIDE %>%
+  filter(final_school_id != "S03",
+         final_school_id != "S07")
+
+#create anaylsis data
+LONG_AD <- LONG %>%
+  filter(final_school_id != "S03",
+         final_school_id != "S07")
+
+# total original sample
+length(unique(LONG_AD$studentID)) #1162 students
+length(unique(LONG_AD$problem)) # 252 problems
+table(LONG_AD$completed) # 109564
+
+# no missing clover data for students who completed assignments
+table(is.na(LONG_AD$clover_first))
+
+# no missing error data for students who completed assignments
+table(is.na(LONG_AD$error))
+
+#74 missing pretest scores
+table(is.na(WIDE_AD$pre.total_math_score)) 
+
+#134 students missing Math Anxiety scores
+table(is.na(WIDE_AD$pre_MA_avg_score)) 
+
+#74 missing pretest scores
+table(is.na(WIDE_AD$pre.total_math_score), 
+      is.na(WIDE_AD$pre_MA_avg_score)) 
+  # all the student who were missing Pretest scores were also missing MA scores
+
+LONG_AD <- LONG_AD %>%
+  ungroup() %>%
+  filter(is.na(LONG_AD$pre.total_math_score) == F &
+         is.na(LONG_AD$pre_MA_avg_score) == F &
+         LONG_AD$completed == 1 &
+         LONG_AD$clover_first != 0)
+
+# total final sample
+length(unique(LONG_AD$studentID)) #1031 students
+length(unique(LONG_AD$problem)) # 252 problems
+table(LONG_AD$completed) # 74359
+
+# Exclude students who are not in the LONG_AD in the WIDE_AD
+WIDE_AD <- WIDE_AD %>%
+  inner_join(LONG_AD %>%
+               select(studentID) %>%
+               distinct(),
+             by = "studentID")
+#### DEMOGRAPHICS ####
+round((table(WIDE_AD$student_raceEthnicityFed)/length(WIDE_AD$student_raceEthnicityFed)*100), 3)
+
+# 1 = Hispanic/Latino, 
+# 2 = American Indian/Alaska Native, 
+# 3 = Asian, 
+# 4 = Black/African American, 
+# 5 = Native Hawaiian or Other Pacific islander
+# 6 = White, 
+# 7 = Two or more races
+
+round((table(WIDE_AD$IEP)/length(WIDE_AD$IEP)*100), 3)
+round((table(WIDE_AD$ESOL)/length(WIDE_AD$ESOL)*100), 3)
+
+```
+
+# Frequencies, Descrpitives and Assumptions 
+
+## Student Level Data
+```{r}
+#### REPLAYS ####
+
+# how many students replay? (i.e. "go back")
+# 81% of students (967) go back at least once 
+table(WIDE_AD$o_percent_gobacks == 0)/length(WIDE_AD$o_percent_gobacks)
+
+# very positively skewed
+describe(WIDE_AD$o_percent_gobacks)
+ggplot(data =WIDE,
+       aes(o_percent_gobacks)) +
+  geom_histogram()
+
+### Problems Complete ####
+mean(WIDE$o_distinct_completed)
+sum(WIDE$o_tried)
+
+#### RESET ####
+
+# almost all students (98.6%) reset at least once
+table(WIDE_AD$o_percentage_reset == 0)/length(WIDE_AD$o_percentage_reset)
+
+#  normal distribution
+describe(WIDE_AD$o_percentage_reset)
+ggplot(data =WIDE,
+       aes(o_percentage_reset)) +
+  geom_histogram()
+
+
+#### REPLAY BY RESET ####
+ggplot(data =WIDE,
+       aes(o_percent_gobacks, o_percentage_reset )) +
+  geom_point()
+
+cor.test(
+    WIDE_AD$o_percent_gobacks,
+    WIDE_AD$o_percentage_reset)
+
+
+table(LONG_AD$reset, LONG_AD$goback)/length(LONG_AD$goback)
+
+
+#### ERRORS ####
+# normal
+describe(WIDE_AD$o_percent_error)
+  ggplot(data =WIDE,
+       aes(o_percent_error )) +
+  geom_histogram()
+
+  
+#### COMPLETIONS ####
+#  bimodal distribution (skew and kurtosis are okay )
+describe(WIDE_AD$o_distinct_completed)
+  ggplot(data =WIDE,
+       aes(o_distinct_completed )) +
+  geom_histogram()
+
+  
+#### DEMOGRAPHICS ####
+
+# race ethnicity
+table(WIDE_AD$student_raceEthnicityFed) 
+  table(is.na(WIDE_AD$student_raceEthnicityFed) ) #14 missing Demo data
+
+# 1 = Hispanic/Latino, 
+# 2 = American Indian/Alaska Native, 
+# 3 = Asian, 
+# 4 = Black/African American, 
+# 5 = Native Hawaiian or Other Pacific islander
+# 6 = White, 
+# 7 = Two or more races
+
+# dummy code race/ethnicity (white is reference bc it is largest group)
+WIDE_AD$Latinx <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
+                      ifelse(WIDE_AD$student_raceEthnicityFed == 1, 1, 0))
+WIDE_AD$Native <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
+                      ifelse(WIDE_AD$student_raceEthnicityFed == 2, 1, 0))
+WIDE_AD$Asian <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
+                      ifelse(WIDE_AD$student_raceEthnicityFed == 3, 1, 0))
+WIDE_AD$Black <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
+                      ifelse(WIDE_AD$student_raceEthnicityFed == 4, 1, 0))
+WIDE_AD$TwoPlusRaces <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
+                      ifelse(WIDE_AD$student_raceEthnicityFed == 4, 1, 0))
+
+  table(WIDE_AD$student_hispanicEthnicity, WIDE_AD$Latinx) # complete overlap
+  
+# ESOL  
+table(is.na(WIDE_AD$ESOL) ) # 161 MISSING!
+table(WIDE_AD$ESOL) 
+table(WIDE_AD$ESOL) /length(WIDE_AD$ESOL) # 8.87% (of the students we have data for)
+
+table(WIDE_AD$ESOL_FORMER) # can decide whether we should put these students 
+
+table(is.na(WIDE_AD$MALE))# 161 MISSING!
+table(WIDE_AD$MALE, WIDE_AD$FEMALE) # no overlap
+
+# Performance level  --> WHICH YEARS PL DO WE WANT TO USE (Are these the 6th grade levels)
+table(WIDE_AD$PerformanceLevel)
+WIDE_AD$PerformanceLevel <- ifelse(WIDE_AD$PerformanceLevel == "", NA, WIDE_AD$PerformanceLevel)
+table(is.na(WIDE_AD$PerformanceLevel)) # 175 MISSING!
+
+# dummy code permanence levels (Proficient Leaner as reference)
+WIDE_AD$Beginning <- ifelse(
+  is.na(WIDE_AD$PerformanceLevel),
+  NA,
+  ifelse(WIDE_AD$PerformanceLevel == "Beginning Learner", 1, 0))
+
+WIDE_AD$Developing <- ifelse(
+  is.na(WIDE_AD$PerformanceLevel),
+  NA,
+  ifelse(WIDE_AD$PerformanceLevel == "Developing Learner", 1, 0))
+
+WIDE_AD$Distinguished <- ifelse(
+  is.na(WIDE_AD$PerformanceLevel),
+  NA,
+  ifelse(WIDE_AD$PerformanceLevel == "Distinguished Learner", 1, 0))
+
+table(WIDE_AD$PerformanceLevel, WIDE_AD$Distinguished)
+
+
+  table(WIDE_AD$GIFTED, WIDE_AD$PerformanceLevel) # a lot of overlap between gifted and performance levels
+
+#### PERFORMANCE SCORES ####
+
+# researcher created measures
+table(is.na(WIDE_AD$pre.total_math_score))
+table(is.na(WIDE_AD$post.total_math_score))
+  table(is.na(WIDE_AD$pre.total_math_score), is.na(WIDE_AD$post.total_math_score)) # 777 with both scores
+
+
+describe(WIDE_AD$pre.total_math_score)
+ggplot(data =WIDE,
+       aes(pre.total_math_score)) +
+  geom_histogram()
+
+describe(WIDE_AD$post.total_math_score)
+ggplot(data =WIDE,
+       aes(post.total_math_score)) +
+  geom_histogram()
+
+ggplot(data =WIDE,
+       aes(post.total_math_score, pre.total_math_score )) +
+  geom_density2d()
+
+cor.test(WIDE_AD$post.total_math_score, WIDE_AD$pre.total_math_score)
+
+# standardized measures
+describe(WIDE_AD$ScaleScore_5th.grade)
+ggplot(data =WIDE,
+       aes(ScaleScore_5th.grade)) +
+  geom_histogram()
+
+describe(WIDE_AD$Scale.Score_7th.grade)
+ggplot(data =WIDE,
+       aes(Scale.Score_7th.grade)) +
+  geom_histogram()
+
+cor.test(WIDE_AD$ScaleScore_5th.grade, WIDE_AD$Scale.Score_7th.grade)
+cor.test(WIDE_AD$ScaleScore_5th.grade, WIDE_AD$pre.total_math_score)
+cor.test(WIDE_AD$Scale.Score_7th.grade, WIDE_AD$post.total_math_score)
+
+
+#### MATH ANXIETY ####
+describe(WIDE_AD$pre_MA_avg_score)
+ggplot(data =WIDE,
+       aes(pre_MA_avg_score)) +
+  geom_histogram(bins = 40)
+
+describe(WIDE_AD$post_MA_avg_score)
+ggplot(data =WIDE,
+       aes(post_MA_avg_score)) +
+  geom_histogram(bins = 40)
+
+```
+
+## Problem Attempt Level Data
+```{r}
+# dummy code race/ethnicity (white is reference bc it is largest group)
+LONG_AD$Latinx <- ifelse(is.na(LONG_AD$student_raceEthnicityFed), NA,
+                      ifelse(LONG_AD$student_raceEthnicityFed == 1, 1, 0))
+LONG_AD$Native <- ifelse(is.na(LONG_AD$student_raceEthnicityFed), NA,
+                      ifelse(LONG_AD$student_raceEthnicityFed == 2, 1, 0))
+LONG_AD$Asian <- ifelse(is.na(LONG_AD$student_raceEthnicityFed), NA,
+                      ifelse(LONG_AD$student_raceEthnicityFed == 3, 1, 0))
+LONG_AD$Black <- ifelse(is.na(LONG_AD$student_raceEthnicityFed), NA,
+                      ifelse(LONG_AD$student_raceEthnicityFed == 4, 1, 0))
+LONG_AD$TwoPlusRaces <- ifelse(is.na(LONG_AD$student_raceEthnicityFed), NA,
+                      ifelse(LONG_AD$student_raceEthnicityFed == 4, 1, 0))
+
+
+# dummy code permanence levels (Proficient Leaner as reference)
+LONG_AD$Beginning <- ifelse(
+  is.na(LONG_AD$PerformanceLevel),
+  NA,
+  ifelse(LONG_AD$PerformanceLevel == "Beginning Learner", 1, 0))
+
+LONG_AD$Developing <- ifelse(
+  is.na(LONG_AD$PerformanceLevel),
+  NA,
+  ifelse(LONG_AD$PerformanceLevel == "Developing Learner", 1, 0))
+
+LONG_AD$Distinguished <- ifelse(
+  is.na(LONG_AD$PerformanceLevel),
+  NA,
+  ifelse(LONG_AD$PerformanceLevel == "Distinguished Learner", 1, 0))
+
+table(LONG_AD$PerformanceLevel, LONG_AD$Distinguished)
+
+table(LONG_AD$clover_first, LONG_AD$goback)
+
+
+table(LONG_AD$clover_first)
+table(LONG_AD$clover_last)
+table(is.na(LONG_AD$clover_last)) # no missing --> so if colver first = colver last then 
+LONG_AD$clover_change <- LONG_AD$clover_last-LONG_AD$clover_first
+table(LONG_AD$clover_change)
+table(LONG_AD$reset)
+
+
+## Clovers
+ # dummy code first clovers (0, is reference cat)
+table(LONG_AD$clover_first)
+LONG_AD$clover_first1 <- ifelse(LONG_AD$clover_first == 1, 1, 0)
+LONG_AD$clover_first2 <- ifelse(LONG_AD$clover_first == 2, 1, 0)
+LONG_AD$clover_first3 <- ifelse(LONG_AD$clover_first == 3, 1, 0)
+
+table(LONG_AD$clover_change, LONG_AD$goback, LONG_AD$reset)
+# this is confusing to me: there seem to be students who had a change in there clovers from first to last, but didn't reset or replay  --> how is this possible
+table(LONG_AD$clover_change, LONG_AD$goback == 0 & LONG_AD$reset ==0)
+
+table(LONG_AD$first_error)
+
+table(LONG_AD$error)
+
+### Replay VS Reset
+table(LONG_AD$reset) / length(LONG_AD$reset)
+table(LONG_AD$goback)/ length(LONG_AD$goback)
+
+# Create Replay/Reset Variable
+
+LONG_AD$replay_reset <- as.factor(ifelse(LONG_AD$goback == 0 & 
+                                 LONG_AD$reset == 0, "None",
+                               ifelse(LONG_AD$goback == 1 & 
+                                 LONG_AD$reset == 1, "Both",
+                               ifelse(LONG_AD$goback == 1, "Replay",
+                                      ifelse(LONG_AD$reset == 1, "Reset", "NA"
+                                             )))))
+table(LONG_AD$replay_reset)/length(LONG_AD$replay_reset)
+table(LONG_AD$goback, LONG_AD$reset)/ length(LONG_AD$goback)
+
+
+LONG_AD$replay_reset <- relevel(LONG_AD$replay_reset, ref = "None")
+
+
+## LOOK INTO TIME AND GO BACKS Is there a difference between time 
+
+
+### MC math anxiety 
+LONG_AD$pre_MA_avg_score_MC <- LONG_AD$pre_MA_avg_score - mean(LONG_AD$pre_MA_avg_score)
+describe(LONG_AD$pre_MA_avg_score)
+table(is.na(LONG_AD$pre_MA_avg_score))
+describe(LONG_AD$pre_MA_avg_score_MC)
+
+```
+
+# RQ1: Which feedback features (Clovers VS Errors) of FH2T precit replay vs reset behavior
+  
+ "As some powerful statisticians have argued (Begg and Gray, 1984; Allison, 1984, p. 46-47), separate logit models are much more flexible as they permit for the independent specification of the model equation for each contrast.
+ ...
+ Yes, with some disclaimers. This method is called the “Begg and Gray Approximation”. Begg and Gray (1984, p. 16) showed that this “individualized method is highly efficient”. However, there is some efficiency loss and the Begg and Gray Approximation produces larger standard errors (Agresti 2002, p. 274). As such, it is more difficult to obtain significant results with this method and the results can be considered conservative. This efficiency loss is smallest when the reference category is large (Begg and Gray, 1984; Agresti 2002).
+ Agresti, A. (2002). Categorical data analysis (2nd ed.). Hoboken, NJ: John Wiley & Sons.
+
+
+Begg, C. B., & Gray, R. (1984). Calculation of polychotomous logistic regression parameters using individualized regressions. Biometrika, 71(1), 11-18.
+ "
+ --> https://stackoverflow.com/questions/21082396/multinomial-logistic-multilevel-models-in-r
+```{r}
+### MODELS ####
+test <- multinom(replay_reset ~ ses + write, data = LONG_AD)
+
+Model_Replay_1 <-  glmer(
+  goback ~
+    clover_first2 +
+    clover_first3 +
+    error + # what is the  relation between errors and clovers
+    scale(pre.total_math_score) +
+    Latinx +
+    Native +
+    Black +
+    TwoPlusRaces +
+    ESOL +
+    pre_MA_avg_score +
+    (1 | problem) +
+    (1 | studentID),
+  data = LONG_AD,
+  family = binomial()
+)
+summary(Model_Replay_1)
+
+Model_Replay_2 <-  glmer(
+  goback ~
+    clover_first2 +
+    clover_first3 +
+    error + # what is the  relation between errors and clovers
+    scale(pre.total_math_score) +
+    scale(pre_MA_avg_score) +
+    (1 | problem) +
+    (1 | studentID),
+  data = LONG_AD,
+  family = binomial()
+)
+summary(Model_Replay_2)
+
+
+Model_Reset_1 <-  glmer(
+  reset ~
+    clover_first2 +
+    clover_first3 +
+    error + # what is the  relation between errors and clovers
+    scale(pre.total_math_score) +
+    Latinx +
+    Native +
+    Black +
+    TwoPlusRaces +
+    ESOL +
+    pre_MA_avg_score +
+    (1 | problem) +
+    (1 | studentID),
+  data = LONG_AD,
+  family = binomial()
+)
+summary(Model_Reset_1)
+
+Model_Reset_2 <-  glmer(
+  reset ~
+    clover_first2 +
+    clover_first3 +
+    error + # what is the  relation between errors and clovers
+    scale(pre.total_math_score) +
+    scale(pre_MA_avg_score) +
+    (1 | problem) +
+    (1 | studentID),
+  data = LONG_AD,
+  family = binomial()
+)
+summary(Model_Reset_2)
+
+
+Model_Reset_2_cof<-as.data.frame(summary(Model_Reset_2)$coefficients)
+colnames(Model_Reset_2_cof)
+
+Model_Replay_2_cof<-as.data.frame(summary(Model_Replay_2)$coefficients)
+colnames(Model_Replay_2_cof)
+
+round(p.adjust(Model_Reset_2_cof$`Pr(>|z|)`, method = "BH"), 6)
+round(p.adjust(Model_Replay_2_cof$`Pr(>|z|)`, method = "BH"), 6)
+round(p.adjust(rbind(Model_Replay_2_cof$`Pr(>|z|)`,
+                     Model_Reset_2_cof$`Pr(>|z|)`), method = "BH"), 6)
+cbind(Model_Replay_2_cof$`Pr(>|z|)`,
+                     Model_Reset_2_cof$`Pr(>|z|)`)
+
+
+tab_model(
+  Model_Replay_2,
+  Model_Reset_2
+)
+
+tab_model(RQ1_FINAL,
+          
+  show.aic = T,
+  show.r2 = F)
+
+summary(RQ1_FINAL)
+
+```
+
+
