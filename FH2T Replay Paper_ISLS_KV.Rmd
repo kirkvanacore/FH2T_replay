@@ -55,7 +55,8 @@ for_merging_all_levels <- data_all_levels %>%
     starts_with("p") &
       ends_with("_goback"),
     starts_with("p") &
-      ends_with("_completed") &
+      ends_with("_
+                ted") &
       !contains("first"),
     starts_with("p") &
       ends_with("_clover_first"),
@@ -229,7 +230,7 @@ WIDE <- WIDE_merged_all_levels
 # remove all other data frames
 rm(list=setdiff(ls(), c("LONG", "WIDE"))) # X will remain
 
-#LONG <- read.csv("LONG_merged_all_levels.csv")
+LONG <- read.csv("LONG_merged_all_levels.csv")
 ```
 
  
@@ -251,10 +252,12 @@ length(unique(LONG_AD$studentID)) #1162 students
 length(unique(LONG_AD$problem)) # 252 problems
 table(LONG_AD$completed) # 109564
 
+table(LONG_AD$completed, LONG_AD$first_completed) # 109564
+
 # no missing clover data for students who completed assignments
 table(is.na(LONG_AD$clover_first))
 
-# no missing error data for students who completed assignments
+# no missing error data for students who complteted assignments
 table(is.na(LONG_AD$error))
 
 #74 missing pretest scores
@@ -268,6 +271,7 @@ table(is.na(WIDE_AD$pre.total_math_score),
       is.na(WIDE_AD$pre_MA_avg_score)) 
   # all the student who were missing Pretest scores were also missing MA scores
 
+
 LONG_AD <- LONG_AD %>%
   ungroup() %>%
   filter(is.na(LONG_AD$pre.total_math_score) == F &
@@ -278,7 +282,8 @@ LONG_AD <- LONG_AD %>%
 # total final sample
 length(unique(LONG_AD$studentID)) #1031 students
 length(unique(LONG_AD$problem)) # 252 problems
-table(LONG_AD$completed) # 74359
+table(LONG_AD$
+        ted) # 74359
 
 # Exclude students who are not in the LONG_AD in the WIDE_AD
 WIDE_AD <- WIDE_AD %>%
@@ -318,8 +323,10 @@ ggplot(data =WIDE,
        aes(o_percent_gobacks)) +
   geom_histogram()
 
-### Problems Complete ####
-mean(WIDE$o_distinct_completed)
+### Problems 
+te ####
+mean(WIDE$o_distinct_
+     ted)
 sum(WIDE$o_tried)
 
 #### RESET ####
@@ -352,11 +359,14 @@ describe(WIDE_AD$o_percent_error)
   geom_histogram()
 
   
-#### COMPLETIONS ####
+#### 
+  TIONS ####
 #  bimodal distribution (skew and kurtosis are okay )
-describe(WIDE_AD$o_distinct_completed)
+describe(WIDE_AD$o_distinct_
+         ted)
   ggplot(data =WIDE,
-       aes(o_distinct_completed )) +
+       aes(o_distinct_
+           ted )) +
   geom_histogram()
 
   
@@ -386,7 +396,8 @@ WIDE_AD$Black <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
 WIDE_AD$TwoPlusRaces <- ifelse(is.na(WIDE_AD$student_raceEthnicityFed), NA,
                       ifelse(WIDE_AD$student_raceEthnicityFed == 4, 1, 0))
 
-  table(WIDE_AD$student_hispanicEthnicity, WIDE_AD$Latinx) # complete overlap
+  table(WIDE_AD$student_hispanicEthnicity, WIDE_AD$Latinx) # 
+  te overlap
   
 # ESOL  
 table(is.na(WIDE_AD$ESOL) ) # 161 MISSING!
@@ -524,8 +535,12 @@ table(LONG_AD$reset)
 ## Clovers
  # dummy code first clovers (0, is reference cat)
 table(LONG_AD$clover_first)
+table(is.na(LONG_AD$clover_first))
+
 LONG_AD$clover_first1 <- ifelse(LONG_AD$clover_first == 1, 1, 0)
 LONG_AD$clover_first2 <- ifelse(LONG_AD$clover_first == 2, 1, 0)
+table(LONG_AD$clover_first, LONG_AD$clover_first2 )
+
 LONG_AD$clover_first3 <- ifelse(LONG_AD$clover_first == 3, 1, 0)
 
 table(LONG_AD$clover_change, LONG_AD$goback, LONG_AD$reset)
@@ -638,7 +653,7 @@ RQ1_FINAL <-  glmer(
     clover_first3 +
     error + # what is the  relation between errors and clovers
     scale(pre.total_math_score) +
-    scale(pre_MA_avg_score) +
+    scale(pre_MA_total_score) +
     (1 | problem) +
     (1 | studentID),
   data = LONG_AD,
@@ -646,6 +661,16 @@ RQ1_FINAL <-  glmer(
 )
 
 summary(RQ1_FINAL)
+
+
+table( 
+  LONG_AD$problem_best_step == LONG_AD$user_first_step, LONG_AD$clover_first) # there seem to be some problems with these data
+                    # all TRUE for this statement should == 3 (full clovers) or 0 if they did not complete the problem
+
+
+table(LONG_AD$error)
+table(LONG_AD$error, LONG_AD$first_error > 0)
+table(LONG_AD$goback, LONG_AD$first_error > 0)
 
 # 
 
@@ -707,9 +732,9 @@ RQ1_ <-  glmer(
   family = binomial()
 )
 
-summary(RQ1_FINAL)
+summary(RQ1_)
 
-table(LONG_AD$clover_last, LONG_AD$error)
+table(LONG_AD$clover_last, LONG_AD$goback)
 
 ```
 
@@ -724,19 +749,24 @@ Starting with basic regression model, need to go back and add other covariates: 
 ### Outcome anaylsis
 ```{r}
 # mean center covaraiates
-colnames(WIDE$o_distinct_completed)
+colnames(WIDE$o_distinct_
+         ted)
 table((WIDE$o_total_goback))
-WIDE$per_problem_replay <- (WIDE$o_total_goback)/((WIDE$o_distinct_completed))
+WIDE$per_problem_replay <- (WIDE$o_total_goback)/((WIDE$o_distinct_
+                                                   ted))
 hist(WIDE$per_problem_replay)
 WIDE$per_problem_replay_mc <- WIDE$per_problem_replay - mean(WIDE$per_problem_replay, na.rm =T)
 table((WIDE$o_user_total_step))
 
 describe(WIDE$pre.total_math_score)
 
-cor.test(WIDE$o_total_completed, WIDE$o_distinct_completed)
+cor.test(WIDE$o_total_
+         ted, WIDE$o_distinct_
+         ted)
 
 ## average steps
-WIDE$user_avg_step<- WIDE$o_user_total_step/WIDE$o_total_completed
+WIDE$user_avg_step<- WIDE$o_user_total_step/WIDE$o_total_
+ted
 
 
 # mean center pretrest scores
@@ -769,7 +799,8 @@ RQ2_1 <- lmer(
 RQ2_2 <- lmer(
   post.total_math_score ~
     scale(pre.total_math_score) +
-    o_total_completed +
+    o_total_
+  ted +
     o_user_total_step +
     o_total_error +
     o_percent_gobacks +
@@ -779,7 +810,8 @@ RQ2_2 <- lmer(
 RQ2_3 <- lmer(
   Scale.Score_7th.grade ~
     scale(ScaleScore_5th.grade) +
-    o_total_completed +
+    o_total_
+  ted +
     o_avg_clover_first*o_percent_gobacks +
         o_user_total_step +
 
@@ -799,7 +831,8 @@ tab_model(
 RQ2_4 <- lmer(
   Scale.Score_7th.grade ~
     scale(ScaleScore_5th.grade) +
-    o_total_completed +
+    o_total_
+  ted +
     o_user_total_step +
     o_total_error +
     o_percent_gobacks +
@@ -810,7 +843,8 @@ RQ2_4 <- lmer(
 RQ2_FINAL <- lmer(
   Scale.Score_7th.grade ~
     scale(ScaleScore_5th.grade) +
-    o_total_completed +
+    o_total_
+  ted +
     o_user_total_step +
     o_total_error +
     per_problem_replay_mc +
@@ -895,7 +929,8 @@ tab_model(Q2_LONG_NULL)
 Q2_LONG_m2 <- lmer(
   total_MA_score ~ 
     time +
-    o_total_completed +
+    o_total_
+  ted +
     o_user_total_step +
     o_total_error +
     o_percent_gobacks +
@@ -907,7 +942,8 @@ tab_model(Q2_LONG_m2)
 Q2_LONG_m3 <- lmer(
   total_MA_score ~ 
     time*o_percent_gobacks +
-    o_total_completed +
+    o_total_
+  ted +
     o_total_error +
     o_percent_gobacks +
   (1| studentID),
@@ -919,8 +955,10 @@ LONG_PRE_MID_POST$time_sq <- LONG_PRE_MID_POST$time*LONG_PRE_MID_POST$time
 
 Q2_LONG_m3 <- lmer(
   total_MA_score ~ 
-    time*scale(o_total_completed) +
-    scale(o_total_completed) +
+    time*scale(o_total_
+               ted) +
+    scale(o_total_
+          ted) +
     o_total_error +
     o_percent_gobacks +
   (1| studentID),

@@ -1,0 +1,630 @@
+---
+title: "JLS_Replay_Reset Paper"
+author: "Kirk Vanacore"
+date: "5/5/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# How reward- and error-based feedback systems create micro-failures to support learning strategies
+
+Preregistation:
+https://osf.io/x92nh
+
+## Project Description
+Feedback systems in educational technologies help to teach and engage students in math. However, questions remain on how to present failure feedback to learners to support positive learning behaviors without discouraging students and causing them to disengage entirely from learning. It is important to understand how different types of feedback systems in educational technologies motivate students to persist and adopt effective learning behaviors in response to failure. Here, we explore this question by examining two types of feedback systems—rewards received and errors made—that are tied directly to math strategy and present failure in two different ways within From Here to There! (FH2T), a game-based learning environment that teaches algebra. Specifically, we investigate whether these two feedback systems influence the likelihood that a student will engage in replay behaviors, and how these replay behaviors impact subsequent math strategies.
+
+## Research Questions
+1.
+a) Does the number of clovers earned during the first problem attempt predict the likelihood that students will replay problems?
+
+b) Does receiving below the maximum number of possible clovers (i.e., 1-2 clovers) encourage students to replay problems more than receiving the maximum number of possible clovers (i.e., 3 clovers)?
+
+2. Does making an error during the first problem attempt predict the likelihood that students will replay problems, separately from the number of clovers earned?
+
+3. Do students who replay learn to use more efficient problem solving strategies on subsequent problem attempts?
+
+
+
+
+```{r packages, include=FALSE}
+# prepare libraries
+library(dplyr)
+library(psych)
+library(ggplot2)
+library(sjPlot)
+library(lme4)
+library(tidyverse)
+library(splitstackshape)
+library(reshape2)
+library(stringr)
+library(nnet)
+library(lavaan)
+library(OpenMx)
+library(semPlot)
+library(DBI)
+library(naniar)
+library(ggthemes)
+library(plotROC)
+library(pROC)
+options(max.print=1000000)
+options(scipen = 100)
+gc()
+```
+
+## Data
+
+```{r load data}
+ies_research_con <- dbConnect(RSQLite::SQLite(), "/Users/kirkvanacore/Documents/WPI Analyses/MAPLE_IES_DB_Creation/ies_research schema/maple_ies_research.db")
+
+dat <- dbGetQuery(ies_research_con, 
+"Select a.StuID,
+        a.SchIDPre,
+        a.SchIDEnd,
+        a.pre_total_math_score,
+        a.pre_MA_avg_score,
+        a.pre_MA_total_score,
+        a.post_total_math_score,
+        sp.problem_id,
+        sp.total_replay,
+        IIF( sp.total_replay >= 1, 1, 0)  as any_replay,
+        sp.first_num_steps,
+        sp.first_clovers,
+        sp.first_num_errors,
+        sp.first_num_hints,
+        sp.first_num_resets,
+        sp.first_start_time,
+        sp.first_end_time,
+        sp.best_num_steps,
+        sp.best_clovers,
+        sp.best_num_errors,
+        sp.best_num_hints,
+        sp.best_num_resets,
+        sp.best_start_time,
+        sp.best_end_time,
+        sp.total_completed_attempts,
+        pm.optional,
+        pm.tutorial
+from fh2t_student_problem sp
+    inner join assess a on a.StuID = sp.StuID and a.FH2T = 1
+    inner join fh2t_problems_meta pm on pm.problem_id = sp.problem_id
+    inner join student_id_crosswalk cw on cw.StuID = sp.StuID
+    and cw.condition_assignment = 'FH2T' 
+    where a.DROPSCH1 = 0 and a.DROPSCH2 = 0  
+    
+ ")
+colnames(dat)
+
+
+
+table(dat$first_clovers)
+table(dat$first_clovers, dat$first_num_resets)
+
+table(is.na(dat$first_clovers), is.na(dat$first_num_resets))
+
+length(unique(dat$StuID))
+length(unique(dat$problem_id))
+
+# no duplicates
+length(unique(paste(dat$problem_id, dat$StuID)))
+
+# create next problem clovers
+dat <- dat %>%
+  arrange(StuID, problem_id) %>%
+  group_by(student_id) %>%
+  mutate(
+    next_problem_first_clovers = lead(first_clovers)
+  )
+
+check <- dat %>%
+  select(StuID,
+         problem_id,
+         first_clovers,
+         next_problem_first_clovers)
+
+# dat <- dat %>%
+#   replace_with_na_all(~.x == "#NULL!")
+
+# analysis data
+
+# make sure only the study schools are included
+table(dat$SchIDPre)
+table(dat$SchIDEnd)
+
+# pretest algebra score
+dat$pre_total_math_score <- ifelse(dat$pre_total_math_score == "#NULL!", NA, dat$pre_total_math_score)
+dat$pre_total_math_score <- as.numeric(dat$pre_total_math_score)
+# pretest math anxiety 
+dat$pre_MA_total_score <- ifelse(dat$pre_MA_total_score == "#NULL!", NA, dat$pre_MA_total_score)
+dat$pre_MA_total_score <- as.numeric(dat$pre_MA_total_score)
+
+ad <- dat %>%
+  filter(first_num_resets == 0,
+         SchIDEnd != "#NULL!",
+         is.na(pre_MA_total_score) == F,
+         is.na(pre_total_math_score) == F
+         )
+
+table(ad$SchIDEnd)
+
+
+table((dat$first_clovers))
+table(is.na(dat$first_clovers))
+
+table((ad$first_clovers))
+table(is.na(ad$first_clovers))
+
+table(dat$total_completed_attempts)
+table(ad$total_completed_attempts)
+
+### realtive risk
+exp(-1.51) +
+
+
+
+```
+
+## Analyses
+We will estimate multi-level logistic regressions and linear regressions to answer our research questions. Models will be estimated using 74,359 problems in which students completed at least one attempt. Students saw up to 252 different problems in FH2T, and all problems will be included in the analysis. The models will contain two cross-classified levels (problem and student) because students attempted multiple problem sets and problems were attempted by multiple sets of students. Random intercepts will be entered in the model for both students and problems. Problem-level predictors will include the number of clovers students received after their first attempt (coded as a dummy variable of 2 clovers or 3 clovers earned, using 1 clover as the reference group) and whether the student made at least one error on the first attempt.  Students’ pretest math anxiety and algebraic understanding scores will be included as student-level predictors.
+
+### Descriptive Statsitics
+``` {r Descriptives Assumptions, warning = FALSE}
+# table for continuous variables
+kableExtra::kable(
+  table<-round(describe(ad %>%
+             select(pre_total_math_score,
+                    pre_MA_total_score) ), 2),
+  
+)
+
+
+ggplot(ad, aes(x= pre_total_math_score)) +
+  geom_histogram(bins = 10 )+
+  labs(
+    title = "Algebraic Knowledge Assessment"
+  ) +
+  theme_economist()
+
+ggplot(ad, aes(x= pre_MA_total_score)) +
+  geom_histogram(bins = 15 )+
+  labs(
+    title = "Math Anxiety Assessment"
+  ) +
+  theme_economist()
+```
+
+
+
+### RQ 1 & 2
+RQ1, RQ2) We will conduct a multi-level logistic regression using pretest math score, pretest math anxiety score, whether students made an error on first problem attempt, and the number of clovers students earned on first problem attempt to predict whether students replayed a problem or not.
+	Model 1: replay (yes/no) ~ pretest math score + pretest math anxiety score + error (yes/no) + 2 clovers + 3 clovers + (1|student) + (1|problem)
+
+#### Frequencies
+``` {r}
+# confirm no NAs
+table(is.na(ad$any_replay))
+table(is.na(ad$first_clovers))
+table(is.na(ad$first_error_any))
+table(is.na(ad$first_num_errors))
+
+# replay
+table(ad$any_replay)
+round((table(ad$any_replay)/length(ad$any_replay))*100, 2)
+
+# first clovers - dummy code
+length(ad$first_clovers)
+table(ad$first_clovers)
+round((table(ad$first_clovers)/length(ad$first_clovers))*100, 2)
+
+  # dummy code clovers
+table(is.na(ad$first_clovers))
+  ad$first_clovers_dummy_1 <- ifelse(ad$first_clovers == 1, 1, 0 )
+  ad$first_clovers_dummy_2 <- ifelse(ad$first_clovers == 2, 1, 0 )
+  ad$first_clovers_dummy_3 <- ifelse(ad$first_clovers == 3, 1, 0 )
+
+  # clovers by replay
+  table(ad$first_clovers, ad$any_replay)
+    # % replay clovers =1
+    round((table(ad[ad$first_clovers == 1, ]$any_replay)/
+             length(ad[ad$first_clovers == 1, ]$any_replay))*100, 2)
+    # % replay clovers =2
+    round((table(ad[ad$first_clovers == 2, ]$any_replay)/
+             length(ad[ad$first_clovers == 2, ]$any_replay))*100, 2)
+    # % replay clovers =3
+    round((table(ad[ad$first_clovers == 3, ]$any_replay)/
+             length(ad[ad$first_clovers == 3, ]$any_replay))*100, 2)
+    
+# errors
+ad$first_error_any <- ifelse(ad$first_num_errors > 0, 1,0)
+
+table(ad$first_error_any)
+round((table(ad$first_error_any)/length(ad$first_error_any))*100, 2)
+    
+    table(ad$first_error_any, ad$any_replay)
+    # % replay errors = 1
+    round((table(ad[ad$first_error_any == 1, ]$any_replay)/
+             length(ad[ad$first_error_any == 1, ]$any_replay))*100, 2)
+    # % replay errors = 0
+    round((table(ad[ad$first_error_any == 0, ]$any_replay)/
+             length(ad[ad$first_error_any == 0, ]$any_replay))*100, 2)
+    
+
+
+
+ggplot(ad, aes(x= first_num_errors)) +
+  geom_histogram(bins = 100 ) +
+  theme_economist()
+
+
+# change in efficiency
+ad$step_change <- ad$best_num_steps - ad$first_num_steps
+table(ad$step_change)
+table(ad$any_replay, ad$step_change)
+ggplot(ad, aes(x= step_change)) +
+  geom_histogram(bins = 100 ) +
+  theme_economist()
+ggplot(ad[ad$step_change != 0, ], aes(x= step_change)) +
+  geom_histogram(bins = 100 ) +
+  theme_economist()
+
+table(ad[ad$any_replay == 1, ]$step_change !=0 )
+
+ad$step_change_any <- ifelse(ad$step_change != 0, 1, 0)
+
+
+table(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$step_change_any)
+round((table(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$step_change_any)/
+  length(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$step_change_any) )*100, 2)
+
+
+# reach optimal clovers (ie get 3 stars)
+ad$reach_optimal_steps <- ifelse(is.na(ad$best_clovers), NA,
+            ifelse(ad$best_clovers == 3, 1, 0))
+
+table(ad$best_clovers, ad$reach_optimal_steps)
+
+table(ad$first_clovers, ad$reach_optimal_steps)
+
+table(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$reach_optimal_steps)
+
+
+table(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$reach_optimal_steps)
+round((table(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$reach_optimal_steps)/
+  length(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$reach_optimal_steps) )*100, 2)
+
+
+# next problem correct
+table(ad$next_problem_first_clovers)
+ad$next_problem_optimal <- ifelse(is.na(ad$next_problem_first_clovers), NA,
+            ifelse(ad$next_problem_first_clovers == 3, 1, 0))
+
+```
+	
+	
+#### Models
+``` {r RQ 1}
+RQ1_2_modNULL<- glmer(
+  any_replay ~
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad
+)
+
+summary(RQ1_2_modNULL)
+
+
+RQ1_2_mod1<- glmer(
+  any_replay ~
+   first_clovers_dummy_2 +
+   first_clovers_dummy_3 +
+    first_error_any +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad
+)
+
+summary(RQ1_2_mod1)
+
+
+RQ1_2_mod2<- glmer(
+  any_replay ~
+    first_clovers_dummy_2 +
+    first_clovers_dummy_3 +
+    first_error_any +
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad
+  )
+
+# post hoc model --> make refernce cat
+RQ1_2_mod2_post_hoc <- glmer(
+  any_replay ~
+    first_clovers_dummy_1 +
+    first_clovers_dummy_2 +
+    first_error_any +
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad
+  )
+
+summary(RQ1_2_mod2_post_hoc)
+
+RQ1_2_mod2_coef<- summary(RQ1_2_mod2)$coefficients
+
+tab_model(RQ1_2_modNULL, RQ1_2_mod1, RQ1_2_mod2,
+          transform = NULL, auto.label = FALSE)
+
+# adjusted p-values
+round(p.adjust(RQ1_2_mod2_sum$coefficients[,4], method = "BH"), 4)
+
+
+pvalues <- as.data.frame(summary(RQ1_2_mod2)$coefficients) %>%
+  mutate(
+    p_value_BH = p.adjust(`Pr(>|z|)`, method = "BH"),
+    p_value_holm = p.adjust(`Pr(>|z|)`, method = "holm"),
+
+  )
+round(pvalues, 4)
+
+# adjusted values inlcuding post hoc test
+pvalues <- as.data.frame(rbind(
+  summary(RQ1_2_mod2)$coefficients,
+  (summary(RQ1_2_mod2_post_hoc)$coefficients))) %>%
+  mutate(
+    p_value_BH = p.adjust(`Pr(>|z|)`, method = "BH"),
+    p_value_holm = p.adjust(`Pr(>|z|)`, method = "holm"),
+
+  )
+round(pvalues, 4)
+
+
+auc(ad$any_replay, predict(RQ1_2_mod2))
+plot(roc(ad$any_replay, predict(RQ1_2_mod2)))
+
+# relative risk
+  # compare student who received 2 clovers vs students who received 1 clover
+(exp(RQ1_2_mod2_coef[1,1] + RQ1_2_mod2_coef[2,1])/(1+exp(RQ1_2_mod2_coef[1,1] + RQ1_2_mod2_coef[2,1])))/
+  (exp(RQ1_2_mod2_coef[1,1])/(1+exp(RQ1_2_mod2_coef[1,1])))
+  # compare student who received 2 clovers vs students who received 3 clover
+(exp(RQ1_2_mod2_coef[1,1] + RQ1_2_mod2_coef[2,1])/(1+exp(RQ1_2_mod2_coef[1,1] + RQ1_2_mod2_coef[2,1])))/
+  (exp(RQ1_2_mod2_coef[1,1]+RQ1_2_mod2_coef[3,1])/(1+exp(RQ1_2_mod2_coef[1,1]+RQ1_2_mod2_coef[3,1])))
+
+(exp(RQ1_2_mod2_coef[1,1] + RQ1_2_mod2_coef[2,1])/(1+exp(RQ1_2_mod2_coef[1,1] + RQ1_2_mod2_coef[2,1])))
+(exp(RQ1_2_mod2_coef[1,1]+RQ1_2_mod2_coef[3,1])/(1+exp(RQ1_2_mod2_coef[1,1]+RQ1_2_mod2_coef[3,1])))
+```
+
+### RQ 3
+
+For students who replayed, a multi-level regression will be conducted using pre-test math score, pretest math anxiety, and whether students replayed a problem to predict change in the number of problem-solving steps taken from the first to the last problem attempt.
+	Model 2: (p#_user_step_last  - p#_user_step_first) ~ pretest math score + pretest math anxiety score + (1|student) + (1|problem)
+
+#### Frequeicnies
+```{r}
+# check for NAs
+
+
+
+table(ad$any_replay)
+
+# step improvement
+table(ad[ad$any_replay ==1& ad$first_clovers != 3,]$step_change_any)
+round((table(ad[ad$any_replay ==1& ad$first_clovers != 3,]$step_change_any)
+       /length(ad[ad$any_replay ==1& ad$first_clovers != 3,]$step_change_any))*100, 2)
+
+# optimal steps reached
+table(ad[ad$any_replay ==1& ad$first_clovers != 3,]$reach_optimal_steps)
+round((table(ad[ad$any_replay ==1& ad$first_clovers != 3,]$reach_optimal_steps)
+       /length(ad[ad$any_replay ==1& ad$first_clovers != 3,]$reach_optimal_steps))*100, 2)
+
+
+# next problem optimal
+length(ad$next_problem_optimal)
+length(ad[is.na(ad$next_problem_optimal) == F, ]$next_problem_optimal)
+table(ad$next_problem_optimal)
+# overall
+round((table(ad[is.na(ad$next_problem_optimal) == F, ]$next_problem_optimal)
+       /length(ad[is.na(ad$next_problem_optimal) == F, ]$next_problem_optimal))*100, 2)
+
+  # replay by no replay
+  table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal) == F,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal) == F,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==1 & is.na(ad$next_problem_optimal) == F,]$next_problem_optimal))*100, 2)
+  
+  table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal) == F,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==0,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal) == F,]$next_problem_optimal))*100, 2)
+
+  
+    # replay by no replay by clovers
+  
+  # replay 
+    # clover 1
+  table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal ) == F & ad$first_clovers ==1 ,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal) == F & ad$first_clovers ==1,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==1 & is.na(ad$next_problem_optimal) == F & ad$first_clovers ==1,]$next_problem_optimal))*100, 2)
+      # clover 2
+  table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal  ) == F & ad$first_clovers ==2,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal) == F & ad$first_clovers ==2,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==1 & is.na(ad$next_problem_optimal) == F & ad$first_clovers ==2,]$next_problem_optimal))*100, 2)
+      # clover 3
+  table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal  ) == F & ad$first_clovers ==3,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==1& is.na(ad$next_problem_optimal) == F & ad$first_clovers ==3,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==1 & is.na(ad$next_problem_optimal) == F & ad$first_clovers ==3,]$next_problem_optimal))*100, 2)
+  
+  # no replay 
+    # clover 1
+  table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal ) == F & ad$first_clovers ==1 ,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal) == F & ad$first_clovers ==1,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==0 & is.na(ad$next_problem_optimal) == F & ad$first_clovers ==1,]$next_problem_optimal))*100, 2)
+      # clover 2
+  table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal  ) == F & ad$first_clovers ==2,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal) == F & ad$first_clovers ==2,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==0 & is.na(ad$next_problem_optimal) == F & ad$first_clovers ==2,]$next_problem_optimal))*100, 2)
+      # clover 3
+  table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal  ) == F & ad$first_clovers ==3,]$next_problem_optimal)
+  round((table(ad[ad$any_replay ==0& is.na(ad$next_problem_optimal) == F & ad$first_clovers ==3,]$next_problem_optimal)
+         /length(ad[ad$any_replay ==0 & is.na(ad$next_problem_optimal) == F & ad$first_clovers ==3,]$next_problem_optimal))*100, 2)
+  
+  
+  
+```
+
+#### Graph 
+```{r}
+# number of clovers first and second attempt
+ggplot(ad, aes(x = as.factor(first_clovers), fill = any_replay)) +
+   geom_bar(stat="count",  position=position_dodge())
+
+```
+#### Models
+```{r}
+
+## do students improve?
+# this model only examines students who replay and students who 
+RQ3a_mod1<- glmer(
+   step_change_any ~
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad[ad$any_replay == 1 & ad$first_clovers != 3, ]
+  )
+summary(RQ3a_mod1)
+
+RQ3a_mod2<- glmer(
+   step_change_any ~
+    first_clovers_dummy_2 +
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad[ad$any_replay == 1 & ad$first_clovers != 3, ]
+  )
+summary(RQ3a_mod2)
+
+tab_model(RQ3a_mod2, RQ3a_mod2)
+
+
+
+### Do they reach optimal?
+RQ3b_mod1 <- glmer(
+   reach_optimal_steps ~
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad[ad$any_replay == 1 & ad$first_clovers != 3, ]
+  )
+summary(RQ3b_mod1)
+
+
+RQ3b_mod2<- glmer(
+   reach_optimal_steps ~
+    first_clovers_dummy_2 +
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad[ad$any_replay == 1 & ad$first_clovers != 3, ]
+  )
+summary(RQ3b_mod2)
+tab_model(RQ3b_mod1, RQ3b_mod2)
+
+
+
+### Next problem clovers?
+
+RQ3c_mod1<- glmer(
+   next_problem_optimal ~
+     any_replay +
+    # first_clovers_dummy_2 +
+    # first_clovers_dummy_3 +
+    # first_error_any +
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad
+  )
+summary(RQ3c_mod1)
+tab_model(RQ3c_mod1)
+
+RQ3c_mod2<- glmer(
+   next_problem_optimal ~
+     any_replay +
+    first_clovers_dummy_2 +
+    first_clovers_dummy_3 +
+    first_error_any +
+    scale(pre_total_math_score) +
+    scale(pre_MA_total_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad[is.na(next_problem_optimal) == F, ] # this drops all of the student's last problems because they don't have next correctness
+  )
+summary(RQ3c_mod2)
+tab_model(RQ3c_mod2)
+
+tab_model(RQ3a_mod1, RQ3b_mod1, RQ3c_mod2,
+          transform = NULL, auto.label = FALSE)
+
+# adjusted values
+pvalues <- as.data.frame(rbind(
+  summary(RQ3a_mod1)$coefficients,
+  (summary(RQ3b_mod1)$coefficients)) %>%
+  rbind(summary(RQ3c_mod1)$coefficients)) %>%
+  mutate(
+    p_value_BH = p.adjust(`Pr(>|z|)`, method = "BH"),
+    p_value_holm = p.adjust(`Pr(>|z|)`, method = "holm"),
+
+  )
+round(pvalues, 4)
+
+colnames(pvalues)
+cbind(summary(RQ3a_mod1)$coefficients[,4],
+               summary(RQ3b_mod1)$coefficients[,4],
+               summary(RQ3c_mod2)$coefficients[,4])
+
+# model fit
+auc(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$step_change_any,
+    predict(RQ3a_mod1))
+
+auc(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$reach_optimal_steps,
+    predict(RQ3b_mod1))
+
+auc(ad[is.na(ad$next_problem_optimal) == F, ]$next_problem_optimal,
+    predict(RQ3c_mod2))
+
+# probability of improvement 
+summary(RQ3a_mod1)$coefficients[1,1]
+exp(summary(RQ3a_mod1)$coefficients[1,1])/(1+exp(summary(RQ3a_mod1)$coefficients[1,1]))
+
+# probability of improvement 
+summary(RQ3b_mod1)$coefficients[1,1]
+exp(summary(RQ3b_mod1)$coefficients[1,1])/(1+exp(summary(RQ3b_mod1)$coefficients[1,1]))
+
+# relative risk
+  # compare student who replayed  vs students who did not
+RQ1_2_mod2_coef[1,1]
+  summary(RQ3c_mod2)$coefficients[1,1]
+  summary(RQ3c_mod2)$coefficients[2,1]
+(exp(summary(RQ3c_mod2)$coefficients[1,1] + summary(RQ3c_mod2)$coefficients[2,1]))/
+    (1+summary(RQ3c_mod2)$coefficients[1,1] + summary(RQ3c_mod2)$coefficients[2,1])
+
+```
