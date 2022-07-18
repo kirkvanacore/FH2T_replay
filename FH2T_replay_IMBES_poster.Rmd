@@ -1,0 +1,616 @@
+---
+title: "Motiveate to Presist"
+output: html_notebook
+---
+
+# How reward- and error-based feedback systems create micro-failures to support learning strategies
+
+Preregistation:
+https://osf.io/x92nh
+
+## Project Description
+Feedback systems in educational technologies help to teach and engage students in math. However, questions remain on how to present failure feedback to learners to support positive learning behaviors without discouraging students and causing them to disengage entirely from learning. It is important to understand how different types of feedback systems in educational technologies motivate students to persist and adopt effective learning behaviors in response to failure. Here, we explore this question by examining two types of feedback systems—rewards received and errors made—that are tied directly to math strategy and present failure in two different ways within From Here to There! (FH2T), a game-based learning environment that teaches algebra. Specifically, we investigate whether these two feedback systems influence the likelihood that a student will engage in replay behaviors, and how these replay behaviors impact subsequent math strategies.
+
+## Research Questions
+1.
+a) Does the number of clovers earned during the first problem attempt predict the likelihood that students will replay problems?
+
+b) Does receiving below the maximum number of possible clovers (i.e., 1-2 clovers) encourage students to replay problems more than receiving the maximum number of possible clovers (i.e., 3 clovers)?
+
+2. Does making an error during the first problem attempt predict the likelihood that students will replay problems, separately from the number of clovers earned?
+
+3. Do students who replay learn to use more efficient problem solving strategies on subsequent problem attempts?
+
+
+
+
+```{r packages, include=FALSE}
+# prepare libraries
+library(dplyr)
+library(psych)
+library(ggplot2)
+library(sjPlot)
+library(lme4)
+library(tidyverse)
+library(splitstackshape)
+library(reshape2)
+library(stringr)
+library(nnet)
+library(lavaan)
+library(OpenMx)
+library(semPlot)
+library(DBI)
+library(naniar)
+library(ggthemes)
+library(plotROC)
+library(pROC)
+options(max.print=1000000)
+options(scipen = 100)
+gc()
+```
+
+## Data
+
+```{r load data}
+ies_research_con <- dbConnect(RSQLite::SQLite(), "/Users/kirkvanacore/Documents/WPI Analyses/MAPLE_IES_DB_Creation/ies_research schema/maple_ies_research.db")
+
+dat <- dbGetQuery(ies_research_con, 
+"Select a.StuID,
+        sr.SchIDPre,
+        sr.SchIDEnd,
+        a.pre_total_math_score,
+        a.pre_MA_avg_score,
+        a.pre_MA_total_score,
+        a.post_total_math_score,
+        sp.problem_id,
+        sp.total_replay,
+        IIF( sp.total_replay >= 1, 1, 0)  as any_replay,
+        sp.first_num_steps,
+        sp.first_clovers,
+        sp.first_num_errors,
+        sp.first_num_hints,
+        sp.first_num_resets,
+        sp.first_start_time,
+        sp.first_end_time,
+        sp.best_num_steps,
+        sp.best_clovers,
+        sp.best_num_errors,
+        sp.best_num_hints,
+        sp.best_num_resets,
+        sp.best_start_time,
+        sp.best_end_time,
+        sp.total_completed_attempts,
+        pm.optional,
+        pm.tutorial,
+        pm.optimal_steps
+from fh2t_student_problem sp
+    inner join assess_student a on a.StuID = sp.StuID
+    inner join student_roster sr on sr.StuID = sp.StuID and sr.FH2T = 1
+    inner join fh2t_problems_meta pm on pm.problem_id = sp.problem_id
+    inner join student_id_crosswalk cw on cw.StuID = sp.StuID
+    and cw.condition_assignment = 'FH2T' 
+      where sr.DROPSCH1 = 0 and sr.DROPSCH2 = 0  
+    
+ ")
+colnames(dat)
+
+
+
+table(dat$first_clovers)
+table(dat$first_clovers, dat$first_num_resets)
+
+table(is.na(dat$first_clovers), is.na(dat$first_num_resets))
+
+length(unique(dat$StuID))
+length(unique(dat$problem_id))
+
+# no duplicates
+length(unique(paste(dat$problem_id, dat$StuID)))
+
+# create next problem clovers
+dat <- dat %>%
+  ungroup() %>%
+  arrange(StuID, problem_id) %>%
+  group_by(StuID) %>%
+  mutate(
+    next_problem_first_clovers = lead(first_clovers)
+  )
+
+check <- dat %>%
+  select(StuID,
+         problem_id,
+         first_clovers,
+         next_problem_first_clovers)
+
+
+
+# next problem correct
+table(dat$next_problem_first_clovers)
+dat$next_problem_optimal <- ifelse(is.na(dat$next_problem_first_clovers), NA,
+            ifelse(dat$next_problem_first_clovers == 3, 1, 0))
+# dat <- dat %>%
+#   replace_with_na_all(~.x == "#NULL!")
+
+# analysis data
+
+# make sure only the study schools are included
+table(dat$SchIDPre)
+table(dat$SchIDEnd)
+
+# pretest algebra score
+dat$pre_total_math_score <- ifelse(dat$pre_total_math_score == "#NULL!", NA, dat$pre_total_math_score)
+dat$pre_total_math_score <- as.numeric(dat$pre_total_math_score)
+# pretest math anxiety 
+dat$pre_MA_total_score <- ifelse(dat$pre_MA_total_score == "#NULL!", NA, dat$pre_MA_total_score)
+dat$pre_MA_total_score <- as.numeric(dat$pre_MA_total_score)
+
+ad <- dat %>%
+  filter(first_num_resets == 0,
+         SchIDEnd != "#NULL!",
+         is.na(pre_MA_total_score) == F,
+         is.na(pre_total_math_score) == F ,
+         first_clovers != 3,
+         optimal_steps > 3
+         )
+
+table(ad$SchIDEnd)
+
+## Model Checks 
+table((dat$first_clovers))
+table(is.na(dat$first_clovers))
+
+table((ad$first_clovers))
+table(is.na(ad$first_clovers))
+
+table(dat$total_completed_attempts)
+table(ad$total_completed_attempts)
+
+
+## sample
+# numbert of students
+length(unique(ad$StuID))
+
+# numbert of problems
+length(unique(ad$problem_id))
+
+table(ad$problem_id)
+table(table(ad$problem_id) > 5) # there are some problems with low student attempts
+
+table(ad$problem_id, ad$first_clovers)
+
+write.csv(ad, "IMBES_poster_data.csv")
+```
+
+# Models
+## Statsitical Model
+
+
+$$pr(Replay=Yes) = invLogit(\gamma_{0}+\gamma_{1}Two\;Clovers _{i}+\gamma_{2}Steps\;Over\;Optimal_{i}+\gamma_{3}Two\;Clovers_{i}*Steps\;Over\;Optimal_{i})$$
+
+
+
+
+## Model Variables 
+```{r}
+
+ad$Z <- ifelse(ad$first_clovers == 2, 1, 0)
+table(ad$Z, ad$first_clovers)
+
+
+
+ad$R <- -(( ad$optimal_steps-  ad$first_num_steps  ) +2.5)
+table(ad$R)
+table(ad$R, ad$Z)
+
+hist(ad$R, breaks = 100)
+
+# R outliers
+
+# overall z scores
+describe(scale(ad$R))
+table(scale(ad$R) > 3)
+table(scale(ad$R) < -3)
+
+# z-scores within problems
+ad <- ad %>%
+  ungroup() %>%
+  mutate(
+    R_z = scale(R)
+  ) %>%
+  group_by(problem_id) %>%
+  mutate(
+    R_zprob = scale(R)
+  )
+table(ad$R_zprob > 3)
+table(ad$R_zprob < -3)
+
+
+```
+
+## Viz
+```{r}
+# S Curve Graph
+ad %>% group_by(R, any_replay) %>%
+    mutate(
+      S = length((any_replay))
+    ) %>%
+  ungroup() %>%
+  ggplot( aes(x = R, y = any_replay, color = as.factor(first_clovers))) +
+    geom_point(alpha = .1, aes(size = S))+
+  stat_smooth(method='glm', method.args = list(family=binomial)) +
+  coord_cartesian(xlim = c(-3,20))
+
+
+# mean Graph
+ad %>% group_by(R) %>%
+  filter(R <10) %>%
+    summarise(
+      replay_mean = mean((any_replay)),
+      n = n(),
+      Z = max(Z)
+    ) %>%
+  ungroup() %>%
+  ggplot( aes(x = R, y = replay_mean, color = as.factor(Z))) +
+    geom_point(alpha = 1, aes(size = n))+
+  stat_smooth(method='lm') 
+```
+
+## Simple Linear Models
+### Using RDD
+```{r}
+### Using Package
+require(rddtools)
+
+clovers_rdd <-
+  rdd_data(
+    y = any_replay ,
+    x = R,
+    cutpoint = 0,
+    data = ad %>% 
+      filter(optimal_steps > 3,
+             R != -1.5,
+             R < 10)
+    
+  )
+
+RDD<-rdd_gen_reg(
+clovers_rdd,
+fun = glm,
+slope = c("same")
+)
+summary(RDD)
+
+clusterInf(RDD, clusterVar=ad[(ad$first_clovers !=3),]$problem_id, type = "HC")
+
+plot(clovers_rdd, h =1 )
+
+
+
+```
+
+
+### Using lm
+
+```{r}
+
+
+m1 <- glm(
+     any_replay ~
+      Z+
+      scale(pre_total_math_score)
+    ,
+  family = binomial(),
+  data = ad%>% filter(first_clovers !=3) 
+)
+summary(m1)
+
+m2 <- glm(
+     any_replay ~
+      Z+
+        R +
+      scale(pre_total_math_score)
+        ,
+  family = binomial(),
+  data = ad%>% filter(first_clovers !=3) 
+)
+summary(m2)
+
+
+# Model with different slopes for 
+m3 <- glm(
+     any_replay ~
+      (Z)*R +
+      scale(pre_total_math_score)
+       ,
+        family = binomial(),
+  data = ad %>% filter(optimal_steps >3) 
+)
+summary(m3)
+
+ad$predict_RDD_m3 <- predict(m3, ad, type="response" )
+
+
+
+
+# Model Output Graph
+ad  %>%
+   group_by(R) %>%
+  filter(R <10) %>%
+    summarise(
+      replay_mean_predict = mean((predict_RDD_m3)),
+      n = n(),
+      Z = max(Z)
+    ) %>%
+  ggplot( aes(x = R, y = replay_mean_predict, color = as.factor(Z))) +
+    geom_point(alpha = .5, aes(size = n))+
+  stat_smooth(method='lm') +
+  theme_classic() +
+  coord_cartesian(xlim = c(-3,10))
+
+
+# Model without the 
+m4 <- glm(
+     any_replay ~
+      (Z)+R +
+      scale(pre_total_math_score)
+       ,
+        family = binomial(),
+  data = ad %>% filter(optimal_steps >3,
+                       R > -1.5) 
+)
+summary(m4)
+
+ad$predict_RDD_m4 <- predict(m4, ad, type="response" )
+
+
+
+
+# Model Output Graph
+ad  %>%filter(optimal_steps >3,
+                       R > -1.5)  %>% 
+   group_by(R) %>%
+  filter(R <10) %>%
+    summarise(
+      replay_mean_predict = mean((predict_RDD_m4)),
+      n = n(),
+      Z = max(Z)
+    ) %>%
+  ggplot( aes(x = R, y = replay_mean_predict, color = as.factor(Z))) +
+    geom_point(alpha = .5, aes(size = n))+
+  stat_smooth(method='lm') +
+  theme_classic() +
+  coord_cartesian(xlim = c(-3,10))
+
+```
+
+## Multi-Level Regression
+```{r}
+
+
+mlm_null <- glmer(
+     any_replay ~
+          + (1| problem_id)
+    ,
+  family = binomial(),
+  data = ad%>% filter(first_clovers !=3) 
+)
+summary(mlm_null)
+
+mlm_1 <- glmer(
+     any_replay ~
+     Z
+     + scale(pre_total_math_score)
+          + (1| problem_id)
+    ,
+  family = binomial(),
+  data = ad%>% filter(first_clovers !=3) 
+)
+summary(mlm_1)
+
+mlm_2 <- glmer(
+     any_replay ~
+      Z
+      + R 
+      + scale(pre_total_math_score)
+      + (1| problem_id)
+        ,
+  family = binomial(),
+  data = ad%>% filter(first_clovers !=3) 
+)
+summary(mlm_2)
+
+
+# Model with different slopes for 
+mlm_3 <- glmer(
+     any_replay ~
+      (Z)*R 
+     + scale(pre_total_math_score) 
+     + (1| problem_id)
+     ,
+        family = binomial(),
+  data = ad %>% filter(optimal_steps >3) 
+)
+summary(mlm_3)
+
+
+tab_model(
+   mlm_3,
+   title = "Table 2. Regression Discontinuity Model Output",
+     pred.labels = c("Intercept",
+                    "Two Clovers",
+                     "Steps Over Optimal",
+                     "Algebraic Knowledge (z-score)",
+                     "Two Clovers X Steps Over Optimal"
+                     ),
+   order.terms = c(1,2,3,5,4),
+  dv.labels = c(""),
+  transform = NULL,
+  show.icc = F,
+  string.ci = "Conf. Int (95%)",
+  string.p = "P-Value",
+  CSS = list(
+    css.table = 'font-family: Calibri;'
+
+  ),
+  file = "table3.html")
+rdd_model_table
+# save(rdd_model_table, "rdd_model_table.html")
+library(webshot)
+
+
+ad$predict_RDD_m3 <- predict(mlm_3, ad, type="response" )
+tab_model(mlm_3)
+tab_model(mlm_null, mlm_1, mlm_2 ,mlm_3)
+
+# model fit
+auc(ad$any_replay,
+    ad$predict_RDD_m3)
+
+prob_1clover <-exp(mlm_3@beta[1])/(1+exp(mlm_3@beta[1]))
+prob_2clovers <-exp(mlm_3@beta[2]+mlm_3@beta[1])/
+  (1+exp(mlm_3@beta[2]+mlm_3@beta[1]))
+prob_2clovers/prob_1clover
+prob_1clover/prob_2clovers
+
+
+# 
+# ## decorate lm object with a new class lm_right
+# lm_right <- function(formula,data,...){
+#   mod <- lm(formula,data)
+#   class(mod) <- c('lm_right',class(mod))
+#   mod
+# }
+# predictdf.lm_right <- 
+#   function(model, xseq, se, level){
+#     ## here the main code: truncate to x values at the right
+#     init_range = range(model$model$x)
+#     xseq <- xseq[xseq >=init_range[1]]
+#     ggplot2:::predictdf.default(model, xseq[-length(xseq)], se, level)
+#   }
+# 
+# lm_left <- function(formula,data,...){
+#   mod <- lm(formula,data)
+#   class(mod) <- c('lm_left',class(mod))
+#   mod
+# }
+# predictdf.lm_left <- 
+#   function(model, xseq, se, level){
+#     init_range = range(model$model$x)
+#     ## here the main code: truncate to x values at the left
+#     xseq <- xseq[xseq <=init_range[2]]
+#     ggplot2:::predictdf.default(model, xseq[-length(xseq)], se, level)
+#   }
+
+
+# Model Output Graph
+for_graph<-ad  %>%
+   group_by(R) %>%
+  filter(R <13) %>%
+    summarise(
+      R = R+2.5,
+      replay_mean_predict = mean((predict_RDD_m3)),
+      `Number of Problem Attempts` = n(),
+      Z = max(Z)) %>%
+  mutate(
+      `Performance-Based Feedback`  = dplyr::recode(as.character(Z),
+                 "0" = "One Clover",
+                 "1" = "Two Clovers")
+    ) 
+
+RDD_PLOT<-ggplot(for_graph,
+       aes(x = R, y = replay_mean_predict, color = `Performance-Based Feedback`)) +
+  geom_point(alpha = .5, aes(size = `Number of Problem Attempts`)) +
+  stat_smooth(method = 'lm', se = F) +
+  stat_smooth(
+    data = for_graph %>% dplyr::filter(Z == 0),
+    method = 'lm',
+    se = F,
+    linetype = "dotted",
+    xseq = c(2.5, 3.5)
+  ) +
+  stat_smooth(
+    data = for_graph %>% dplyr::filter(Z == 1),
+    method = 'lm',
+    se = F,
+    linetype = "dotted",
+    xseq = c(1.5, 2.5)
+  ) +
+  
+  geom_vline(aes(xintercept = 2.5), linetype = "dotted") +
+  labs(
+    title = "Figure 3: Average Predicted Probability of Replay by Clovers and Steps Over Optimal",
+    x = "Steps Over Optimal",
+    y = "Probability of Replay"
+  ) +
+  theme_classic() +
+  annotate(
+    geom = "text",
+    label = "Clover Cut Point",
+    x = 2.5,
+    y = .32,
+    angle = 90,
+    vjust = -.5,
+    size = 5
+  ) +
+  scale_x_continuous(breaks = seq(0, 14, 1) ) +
+  theme(
+        plot.title = element_text(size = 20, face = "bold"),
+        legend.position = c(.8, .75),
+        legend.box = "virtical",
+        legend.margin =  margin(),
+         legend.title = element_text(size = 18),
+         legend.text = element_text(size = 14),
+        axis.text = element_text(size = 14),
+        axis.title = element_text(size = 18)
+  )+
+  guides(color = guide_legend(order = 1),
+              size = guide_legend(order = 2)) +
+  coord_cartesian(xlim = c(1, 14), ylim = c(.1, .50))
+RDD_PLOT
+
+
+ggsave("IMBES_Fig3.jpeg",
+       RDD_PLOT,
+       width = 1200,
+       height = 600,
+       units = c("px"))
+```
+
+```{r}
+# Model with restricted bandwidth
+m4 <- glm(
+     any_replay ~
+      (Z)+R +
+      scale(pre_total_math_score)
+       ,
+        family = binomial(),
+  data = ad %>% filter(optimal_steps >3,
+                       R > -1.5,
+                       R < 8) 
+)
+summary(m4)
+
+ad$predict_RDD_m4 <- predict(m4, ad, type="response" )
+tab_model(m4)
+
+
+
+# Model Output Graph
+ad  %>%filter(optimal_steps >3,
+                       R > -1.5,
+                       R < 10
+              )  %>% 
+   group_by(R) %>%
+  filter(R <10) %>%
+    summarise(
+      replay_mean_predict = mean((predict_RDD_m4)),
+      n = n(),
+      Z = max(Z)
+    ) %>%
+  ggplot( aes(x = R, y = replay_mean_predict, color = as.factor(Z))) +
+    geom_point(alpha = .5, aes(size = n))+
+  stat_smooth(method='lm') +
+  theme_classic() +
+  coord_cartesian(xlim = c(-2,8))
+
+```
