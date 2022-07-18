@@ -9,17 +9,25 @@ Preregistation:
 https://osf.io/x92nh
 
 ## Project Description
-Feedback systems in educational technologies help to teach and engage students in math. However, questions remain on how to present failure feedback to learners to support positive learning behaviors without discouraging students and causing them to disengage entirely from learning. It is important to understand how different types of feedback systems in educational technologies motivate students to persist and adopt effective learning behaviors in response to failure. Here, we explore this question by examining two types of feedback systems—rewards received and errors made—that are tied directly to math strategy and present failure in two different ways within From Here to There! (FH2T), a game-based learning environment that teaches algebra. Specifically, we investigate whether these two feedback systems influence the likelihood that a student will engage in replay behaviors, and how these replay behaviors impact subsequent math strategies.
+Motivation and persistence are important for learning challenging concepts and acquiring difficult skills. Digital educational games allow students to demonstrate productive persistence by providing opportunities for students to repeat the same or similar problems until they reach mastery (Owen, 2019). Productive persistence in educational games is positively associated with distal educational outcomes such as college enrollment (Adjei, 2021). Although motivation influences persistence (Vollmeyer & Rheinberg, 2000), motivating students to persist in educational technology environments is difficult. Studies on motivational components of educational programs (e.g., badges, nudges, rewards) have yielded mixed success in changing student behavior and learning (Aksoy, 2020; McKernan et al., 2015). The current study builds upon previous research on feedback systems in the math game-based learning tool From Here to There! which showed that students who achieved moderate performance on a performance-contingent reward were more likely to replay the problem than students who received low or high performance rewards (Liu et al., 2022). In this poster, we seek to expand upon this research on the association between feedback systems and persistence behaviors using the causal method of regression discontinuity (Sales & Hansen, 2020). Since performance rewards were determined using the number of steps required to complete a problem relative to cut-points, regression discontinuity will allow us to estimate the causal effects of receiving different rewards on students’ likelihood to replay problems. The results of this analysis will help us determine whether the persistence behavior of replaying a problem is driven by the reward-based feedback or simply correlated with the feedback due to confounders. 
 
-## Research Questions
-1.
-a) Does the number of clovers earned during the first problem attempt predict the likelihood that students will replay problems?
 
-b) Does receiving below the maximum number of possible clovers (i.e., 1-2 clovers) encourage students to replay problems more than receiving the maximum number of possible clovers (i.e., 3 clovers)?
+Adjei, S. A., Baker, R. S., Bahel, V. (2021). Seven-year longitudinal implications of wheel spinning and productive persistence. Lecture Notes in Computer Science, 16–28. https://doi.org/10.1007/978-3-030-78292-4_2 
+Aksoy, M. E. (2020). Comparing basic life support serious gaming scores with hands-on training platform performance scores: Pilot simulation study for basic life support training. JMIR Serious Games, 8(4). https://doi.org/10.2196/24166 
 
-2. Does making an error during the first problem attempt predict the likelihood that students will replay problems, separately from the number of clovers earned?
+Lui, A.; Vanacore, K.; Ottmar, E. (accepted) “How reward- and error-based feedback systems create micro-failures to support learning strategies.” In: Proceedings of The 15th International Conference of Learning Sciences.
 
-3. Do students who replay learn to use more efficient problem solving strategies on subsequent problem attempts?
+McKernan, B., Martey, R. M., Stromer-Galley, J., Kenski, K., Clegg, B. A., Folkestad, J. E., Rhodes, M. G., Shaw, A., Saulnier, E. T., &amp; Strzalkowski, T. (2015). We don’t need no stinkin’ badges: The impact of reward features and feeling rewarded in educational games. Computers in Human Behavior, 45, 299–306. https://doi.org/10.1016/j.chb.2014.12.028 
+
+Owen, V. E, Roy, M. H, Thai, K. P., Burnett, V., Jacobs, D., Keylor E., Baker, R. "Detecting Wheel Spinning and Productive Persistence in Educational Games" In: Proceedings of The 12th International Conference on Educational Data Mining (EDM 2019), Collin F. Lynch, Agathe Merceron, Michel Desmarais, & Roger Nkambou (eds.) 2019, pp. 378 - 383
+
+Shute, V. J., D'Mello, S., Baker, R., Cho, K., Bosch, N., Ocumpaugh, J., Ventura, M., & Almeda, V. (2015). Modeling how incoming knowledge, persistence, affective states, and in-game progress influence student learning from an educational game. Computers and Education, 86, 224-235. https://doi.org/10.1016/j.compedu.2015.08.001
+
+Vollmeyer, R., &; Rheinberg, F. (2000). Does motivation affect performance via persistence? Learning and Instruction, 10(4), 293–309. https://doi.org/10.1016/s0959-4752(99)00031-6 
+
+## Research Question
+**Does the number of clovers earned during the first problem attempt affect the students will replay problems?**
+
 
 
 
@@ -384,6 +392,7 @@ ad  %>%filter(optimal_steps >3,
 ```
 
 ## Multi-Level Regression
+_This is the model I used for the IBMES Poster,_
 ```{r}
 
 
@@ -473,33 +482,6 @@ prob_2clovers/prob_1clover
 prob_1clover/prob_2clovers
 
 
-# 
-# ## decorate lm object with a new class lm_right
-# lm_right <- function(formula,data,...){
-#   mod <- lm(formula,data)
-#   class(mod) <- c('lm_right',class(mod))
-#   mod
-# }
-# predictdf.lm_right <- 
-#   function(model, xseq, se, level){
-#     ## here the main code: truncate to x values at the right
-#     init_range = range(model$model$x)
-#     xseq <- xseq[xseq >=init_range[1]]
-#     ggplot2:::predictdf.default(model, xseq[-length(xseq)], se, level)
-#   }
-# 
-# lm_left <- function(formula,data,...){
-#   mod <- lm(formula,data)
-#   class(mod) <- c('lm_left',class(mod))
-#   mod
-# }
-# predictdf.lm_left <- 
-#   function(model, xseq, se, level){
-#     init_range = range(model$model$x)
-#     ## here the main code: truncate to x values at the left
-#     xseq <- xseq[xseq <=init_range[2]]
-#     ggplot2:::predictdf.default(model, xseq[-length(xseq)], se, level)
-#   }
 
 
 # Model Output Graph
@@ -576,41 +558,4 @@ ggsave("IMBES_Fig3.jpeg",
        units = c("px"))
 ```
 
-```{r}
-# Model with restricted bandwidth
-m4 <- glm(
-     any_replay ~
-      (Z)+R +
-      scale(pre_total_math_score)
-       ,
-        family = binomial(),
-  data = ad %>% filter(optimal_steps >3,
-                       R > -1.5,
-                       R < 8) 
-)
-summary(m4)
 
-ad$predict_RDD_m4 <- predict(m4, ad, type="response" )
-tab_model(m4)
-
-
-
-# Model Output Graph
-ad  %>%filter(optimal_steps >3,
-                       R > -1.5,
-                       R < 10
-              )  %>% 
-   group_by(R) %>%
-  filter(R <10) %>%
-    summarise(
-      replay_mean_predict = mean((predict_RDD_m4)),
-      n = n(),
-      Z = max(Z)
-    ) %>%
-  ggplot( aes(x = R, y = replay_mean_predict, color = as.factor(Z))) +
-    geom_point(alpha = .5, aes(size = n))+
-  stat_smooth(method='lm') +
-  theme_classic() +
-  coord_cartesian(xlim = c(-2,8))
-
-```
