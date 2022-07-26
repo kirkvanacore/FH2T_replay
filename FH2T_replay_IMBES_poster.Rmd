@@ -528,7 +528,7 @@ RDD_PLOT<-ggplot(for_graph,
   annotate(
     geom = "text",
     label = "Clover Cut Point",
-    x = 2.5,
+    x = 2.5, 
     y = .32,
     angle = 90,
     vjust = -.5,
