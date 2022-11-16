@@ -11,22 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # How reward- and error-based feedback systems create micro-failures to support learning strategies
 
-Preregistation:
-https://osf.io/x92nh
-
-## Project Description
-Feedback systems in educational technologies help to teach and engage students in math. However, questions remain on how to present failure feedback to learners to support positive learning behaviors without discouraging students and causing them to disengage entirely from learning. It is important to understand how different types of feedback systems in educational technologies motivate students to persist and adopt effective learning behaviors in response to failure. Here, we explore this question by examining two types of feedback systems—rewards received and errors made—that are tied directly to math strategy and present failure in two different ways within From Here to There! (FH2T), a game-based learning environment that teaches algebra. Specifically, we investigate whether these two feedback systems influence the likelihood that a student will engage in replay behaviors, and how these replay behaviors impact subsequent math strategies.
-
-## Research Questions
-1.
-a) Does the number of clovers earned during the first problem attempt predict the likelihood that students will replay problems?
-
-b) Does receiving below the maximum number of possible clovers (i.e., 1-2 clovers) encourage students to replay problems more than receiving the maximum number of possible clovers (i.e., 3 clovers)?
-
-2. Does making an error during the first problem attempt predict the likelihood that students will replay problems, separately from the number of clovers earned?
-
-3. Do students who replay learn to use more efficient problem solving strategies on subsequent problem attempts?
-
 
 
 
@@ -357,7 +341,7 @@ rbind((table(demo_data_all_FH2T$ESOL)),
 
 
 ## Analyses
-We will estimate multi-level logistic regressions and linear regressions to answer our research questions. Models will be estimated using 74,359 problems in which students completed at least one attempt. Students saw up to 252 different problems in FH2T, and all problems will be included in the analysis. The models will contain two cross-classified levels (problem and student) because students attempted multiple problem sets and problems were attempted by multiple sets of students. Random intercepts will be entered in the model for both students and problems. Problem-level predictors will include the number of clovers students received after their first attempt (coded as a dummy variable of 2 clovers or 3 clovers earned, using 1 clover as the reference group) and whether the student made at least one error on the first attempt.  Students’ pretest math anxiety and algebraic understanding scores will be included as student-level predictors.
+
 
 ### Descriptive Statsitics
 ``` {r Descriptives Assumptions, warning = FALSE}
@@ -506,14 +490,19 @@ round((table(ad[ad$any_replay == 1 & ad$first_clovers != 3, ]$reach_optimal_step
 
 #### Models
 (a) We will conduct a multi-level logistic regression using pretest math score, pretest math anxiety score, gender, race/ethnicity, and whether students made an error to predict whether students reset a problem or not. 
-	Model 1.1: reset (yes/no) ~ pretest math score + pretest math anxiety score + gender + race/ethnicity + error made + (1|student) + (1|problem)
+	Model 1.1: reset (yes/no) ~ 
+	  pretest math score + 
+	  pretest math anxiety score + 
+	  gender + race/ethnicity + 
+	  error made + (1|student) + (1|problem)
 ``` {r RQ 1}
+hist(ad$first_num_resets)
+table(ad$first_num_resets == 0)/length(ad$first_num_resets) 
+
 RQ1_1 <- glmer(
-  any_replay ~
-    first_clovers_dummy_2 +
-    first_clovers_dummy_3 +
+  first_num_resets > 0 ~
     first_error_any +
-    (pre_MA_total_score) +
+    scale(pre_MA_total_score) +
     scale(pre_total_math_score) +
     (1|StuID) +
     (1|problem_id),
@@ -521,13 +510,17 @@ RQ1_1 <- glmer(
   data = ad 
   )
 summary(RQ1_1)
+```	
 
-# model evaluation
-auc(ad$any_replay, predict(RQ1_2_mod2, ad))
-
+	
+	(b) We will conduct a multi-level logistic regression using pretest math score, pretest math anxiety score, gender, race/ethnicity, whether students made an error, and the number of clovers earned to predict whether students replayed a problem or not. 
+		Model 1.2: replay (yes/no) ~ pretest math score + pretest math anxiety score + gender + race/ethnicity + error made + 2 clovers earned + 3 clovers earned + (1|student) + (1|problem)
+``` {r RQ 1}
 RQ1_2 <- glmer(
-  first_num_resets > 0 ~
-    first_error_any*
+  any_replay ~
+    first_clovers_dummy_2 +
+    first_clovers_dummy_3 +
+    first_error_any +
     scale(pre_MA_total_score) +
     scale(pre_total_math_score) +
     (1|StuID) +
@@ -537,40 +530,45 @@ RQ1_2 <- glmer(
   )
 summary(RQ1_2)
 
-
-
-# adjusted values for the both the 
-pvalues <- as.data.frame(
-  (summary(RQ1_2_mod2)$coefficients)) %>%
-  mutate(
- #   p_value_BH = p.adjust(`Pr(>|z|)`, method = "BH"),
-    p_value_holm = p.adjust(`Pr(>|z|)`, method = "holm"),
-
-  )
-round(pvalues, 4)
 ```
 
-
-RQ2) 
+##RQ2) 
 	(a) We will build on the model used for RQ1a and add an interaction between pretest math anxiety and whether students made an error.
 		Model 2.1: reset (yes/no) ~ pre MA + pre math score + gender + race/ethnicity + error made on first problem attempt + (error * pre MA) + (1|student) + (1|problem)
-	(b) We will build on the model used for RQ1b and add an interaction between pretest math anxiety and 2 clovers earned, as well as pretest math anxiety and 3 clovers earned.
-		Model 2.2: replay (yes/no) ~ pre MA + pre math score + gender + race/ethnicity + error on first problem attempt + 2 clovers earned after first problem attempt + 3 clovers earned after first problem attempt + (2 clovers * pre MA) + (3 clovers * pre MA) + (1|student) + (1|problem)
-		
-```{r}
-RQ1_1 <- glmer(
-  any_replay ~
-    first_clovers_dummy_2*scale(pre_MA_total_score) +
-    first_clovers_dummy_3*scale(pre_MA_total_score) +
-    first_error_any +
+``` {r RQ 1}
+hist(ad$first_num_resets)
+table(ad$first_num_resets == 0)/length(ad$first_num_resets) 
+ad$pre_MA_total_score_high <- (ad$pre_MA_total_score-27)
+RQ2_1 <- glmer(
+  first_num_resets > 0 ~
+    first_error_any*(pre_MA_total_score_high)  +
     scale(pre_total_math_score) +
-    
     (1|StuID) +
     (1|problem_id),
   family = binomial(),
-  data = ad
+  data = ad 
   )
-summary(RQ1_1)
+summary(RQ2_1)
+```	
 
+		
+		
+	(b) We will build on the model used for RQ1b and add an interaction between pretest math anxiety and 2 clovers earned, as well as pretest math anxiety and 3 clovers earned.
+		Model 2.2: replay (yes/no) ~ pre MA + pre math score + gender + race/ethnicity + error on first problem attempt + 2 clovers earned after first problem attempt + 3 clovers earned after first problem attempt + (2 clovers * pre MA) + (3 clovers * pre MA) + (1|student) + (1|problem)
+		
+``` {r RQ 1}
+RQ2_2 <- glmer(
+  any_replay ~
+    first_clovers_dummy_2 +
+    first_clovers_dummy_3 +
+    first_error_any*
+    scale(pre_MA_total_score) +
+    scale(pre_total_math_score) +
+    (1|StuID) +
+    (1|problem_id),
+  family = binomial(),
+  data = ad 
+  )
+summary(RQ2_2)
 
 ```
